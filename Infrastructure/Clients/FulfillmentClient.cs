@@ -32,6 +32,6 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
 
         var candidates = await response.Content.ReadFromJsonAsync<List<FulfillmentCandidate>>(cancellationToken);
-        return candidates ?? Array.Empty<FulfillmentCandidate>();
+        return candidates ?? new List<FulfillmentCandidate>();
     }
 }

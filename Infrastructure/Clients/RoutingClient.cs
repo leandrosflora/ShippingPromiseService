@@ -40,6 +40,6 @@ public sealed class RoutingClient : IRoutingClient
         }
 
         var routes = await response.Content.ReadFromJsonAsync<List<RouteOption>>(cancellationToken);
-        return routes ?? Array.Empty<RouteOption>();
+        return routes ?? new List<RouteOption>();
     }
 }

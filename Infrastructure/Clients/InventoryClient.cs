@@ -31,6 +31,6 @@ public sealed class InventoryClient : IInventoryClient
         }
 
         var availability = await response.Content.ReadFromJsonAsync<List<InventoryAvailability>>(cancellationToken);
-        return availability ?? Array.Empty<InventoryAvailability>();
+        return availability ?? new List<InventoryAvailability>();
     }
 }

@@ -30,6 +30,6 @@ public sealed class ProductCatalogClient : IProductCatalogClient
         }
 
         var products = await response.Content.ReadFromJsonAsync<List<ProductPhysicalInfo>>(cancellationToken);
-        return products ?? Array.Empty<ProductPhysicalInfo>();
+        return products ?? new List<ProductPhysicalInfo>();
     }
 }
