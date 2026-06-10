@@ -1,46 +1,152 @@
 # ShippingPromiseService
 
-O **Shipping Promise Service** é o motor síncrono de decisão logística usado pelo checkout para responder:
+Documentação em português (pt-BR) do microserviço **ShippingPromiseService**, responsável por calcular promessas de entrega para o checkout a partir de dados de comprador, vendedor, destino, itens, estoque, fulfillment, rotas, transportadoras e precificação.
+
+---
+
+## Sumário
+
+- [Objetivo do serviço](#objetivo-do-serviço)
+- [Escopo funcional](#escopo-funcional)
+- [Arquitetura](#arquitetura)
+- [Fluxo de decisão](#fluxo-de-decisão)
+- [Endpoints HTTP](#endpoints-http)
+- [Contratos da API](#contratos-da-api)
+- [Regras de negócio](#regras-de-negócio)
+- [Integrações externas](#integrações-externas)
+- [Cache Redis](#cache-redis)
+- [Auditoria em PostgreSQL](#auditoria-em-postgresql)
+- [Fallback operacional](#fallback-operacional)
+- [Configuração](#configuração)
+- [Execução local](#execução-local)
+- [Swagger e arquivo HTTP](#swagger-e-arquivo-http)
+- [Observabilidade e resiliência](#observabilidade-e-resiliência)
+- [Estrutura de pastas](#estrutura-de-pastas)
+- [Limitações e pontos de atenção](#limitações-e-pontos-de-atenção)
+
+---
+
+## Objetivo do serviço
+
+O **ShippingPromiseService** é o motor síncrono de decisão logística usado pelo checkout para responder à pergunta:
 
 > Para este comprador, vendedor, destino e conjunto de itens, quais opções de entrega existem, quanto custam e qual prazo pode ser prometido?
 
-Ele **não cria pedido**, **não cria remessa** e **não faz rastreamento**. A responsabilidade do serviço é calcular uma promessa de entrega segura para ser exibida no checkout.
+O serviço calcula uma promessa logística segura para exibição antes da compra. Ele avalia disponibilidade de produto, estoque por centro de fulfillment, capacidade operacional, rotas disponíveis, disponibilidade de transportadora, custo de frete e data estimada de entrega.
 
-## Visão geral da arquitetura
+---
 
-A aplicação foi implementada em ASP.NET Core Minimal API e é composta por:
+## Escopo funcional
 
-- **API síncrona** para cálculo de promessa de entrega.
-- **Cache Redis** com TTL curto para promessas finais.
-- **Decision Engine** para escolher a melhor opção entre candidatos logísticos.
-- **Fallback Engine** conservador para falhas temporárias de dependências externas.
-- **Clients HTTP resilientes** para integrações com Product Catalog, Inventory, Fulfillment, Routing, Carrier e Pricing.
-- **PostgreSQL** para auditoria das decisões tomadas pelo motor.
+### O que o serviço faz
 
-## Fluxo principal
+- Recebe uma solicitação de promessa de entrega via `POST /shipping-promises/`.
+- Valida comprador, vendedor, destino e itens.
+- Consulta informações físicas dos produtos.
+- Consulta disponibilidade de estoque para os SKUs solicitados.
+- Consulta centros de fulfillment candidatos para o vendedor e destino.
+- Calcula dados do pacote, incluindo peso real e peso cúbico.
+- Consulta rotas logísticas disponíveis.
+- Verifica disponibilidade de transportadora para o destino.
+- Consulta preço de frete.
+- Monta candidatos de entrega.
+- Seleciona o melhor candidato com base em prazo, custo e prioridade.
+- Retorna a promessa final ao checkout.
+- Armazena o resultado em cache Redis por curto período.
+- Persiste uma auditoria da decisão em PostgreSQL.
+- Executa fallback conservador em falhas temporárias.
+
+### O que o serviço não faz
+
+- Não cria pedidos.
+- Não cria remessas.
+- Não reserva estoque.
+- Não agenda coleta.
+- Não executa tracking/rastreamento.
+- Não confirma a contratação da transportadora.
+- Não substitui os serviços especialistas de catálogo, estoque, fulfillment, rotas, transportadoras ou preços.
+
+---
+
+## Arquitetura
+
+A aplicação foi implementada em **ASP.NET Core Minimal API** com **.NET 8**.
+
+Componentes principais:
+
+- **API HTTP**: expõe os endpoints do microserviço.
+- **Application Service**: orquestra validação, cache, chamadas externas, cálculo de candidatos, decisão, auditoria e fallback.
+- **Decision Engine**: escolhe a melhor opção entre os candidatos logísticos.
+- **Package Calculator**: consolida dimensões, peso real, peso cúbico e flags do pacote.
+- **Fallback Engine**: constrói uma promessa conservadora quando dependências falham.
+- **Clients HTTP resilientes**: integram com Product Catalog, Inventory, Fulfillment, Routing, Carrier e Pricing.
+- **Redis**: armazena promessas finais por TTL curto.
+- **PostgreSQL**: armazena auditoria das decisões.
+- **Health Checks**: validam a saúde da aplicação e do `DbContext`.
+- **Swagger/OpenAPI**: disponível em ambiente de desenvolvimento.
+
+### Diagrama lógico
+
+```text
+Checkout
+   |
+   | POST /shipping-promises/
+   v
+ShippingPromiseService
+   |
+   +--> Redis Cache
+   |
+   +--> Product Catalog Service
+   +--> Inventory Service
+   +--> Fulfillment Service
+   +--> Routing Service
+   +--> Carrier Service
+   +--> Pricing Service
+   |
+   +--> Decision Engine
+   |
+   +--> PostgreSQL Audit
+   |
+   v
+Resposta de promessa de entrega
+```
+
+---
+
+## Fluxo de decisão
 
 ```text
 POST /shipping-promises/
     ↓
 Valida a requisição
     ↓
-Monta a chave de cache
+Gera chave de cache
     ↓
 Busca promessa no Redis
-    ↓ cache miss
-Consulta Product Catalog + Inventory + Fulfillment em paralelo
+    ↓
+Se cache hit: retorna promessa com Source = "Cache"
+    ↓
+Se cache miss: consulta Product Catalog, Inventory e Fulfillment em paralelo
+    ↓
+Valida se todas as informações de produto foram retornadas
+    ↓
+Bloqueia item restrito
     ↓
 Calcula pacote e peso cúbico
     ↓
-Consulta rotas disponíveis
+Filtra centros de fulfillment com capacidade
     ↓
-Valida disponibilidade da transportadora
+Valida estoque de todos os itens no centro de fulfillment
     ↓
-Consulta preço
+Consulta rotas disponíveis para origem, destino e pacote
+    ↓
+Verifica disponibilidade da transportadora
+    ↓
+Consulta preço do frete
     ↓
 Monta candidatos de entrega
     ↓
-Decision Engine escolhe a melhor promessa
+Seleciona o melhor candidato
     ↓
 Grava cache com TTL curto
     ↓
@@ -49,13 +155,20 @@ Grava auditoria no PostgreSQL
 Retorna promessa ao checkout
 ```
 
-## Endpoints
+---
+
+## Endpoints HTTP
 
 ### `POST /shipping-promises/`
 
-Calcula a promessa logística para comprador, vendedor, destino e itens.
+Calcula a promessa de entrega para um comprador, vendedor, destino e lista de itens.
 
-Exemplo de requisição:
+#### Requisição
+
+```http
+POST /shipping-promises/
+Content-Type: application/json
+```
 
 ```json
 {
@@ -77,7 +190,12 @@ Exemplo de requisição:
 }
 ```
 
-Exemplo de resposta disponível:
+#### Resposta com promessa disponível
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+```
 
 ```json
 {
@@ -92,7 +210,7 @@ Exemplo de resposta disponível:
 }
 ```
 
-Exemplo de resposta indisponível:
+#### Resposta sem promessa disponível
 
 ```json
 {
@@ -107,13 +225,487 @@ Exemplo de resposta indisponível:
 }
 ```
 
+#### Possíveis valores de `source`
+
+| Valor | Significado |
+| --- | --- |
+| `Calculated` | Promessa calculada a partir das integrações em tempo real. |
+| `Cache` | Promessa retornada a partir do Redis. |
+| `Fallback` | Promessa conservadora gerada durante falha temporária. |
+
+#### Possíveis valores de `mode`
+
+| Valor | Descrição |
+| --- | --- |
+| `FULFILLMENT` | Entrega via malha própria/fulfillment. |
+| `FLEX` | Modal flexível. O domínio possui o modo, mas o fluxo atual não o seleciona diretamente. |
+| `CROSSDOCKING` | Modal cross-docking. O domínio possui o modo, mas o fluxo atual não o seleciona diretamente. |
+| `SELLERSHIPPING` | Entrega realizada pelo vendedor, usada no fallback conservador. |
+| `CARRIER` | Entrega por transportadora externa. |
+
+> Observação: no fluxo atual, rotas com carrier `MELI_LOGISTICS` são classificadas como `FULFILLMENT`; demais carriers são classificados como `CARRIER`.
+
+---
+
 ### `GET /health`
 
-Verifica a saúde da aplicação, incluindo a conectividade do `DbContext` configurado para PostgreSQL.
+Executa o health check da aplicação.
 
-## Configuração local
+```http
+GET /health
+Accept: application/json
+```
 
-Configure os valores abaixo em `appsettings.json`, variáveis de ambiente ou user secrets:
+O health check inclui a conectividade do `ShippingPromiseDbContext` configurado para PostgreSQL.
+
+---
+
+## Contratos da API
+
+### `ShippingPromiseRequest`
+
+| Campo | Tipo | Obrigatório | Descrição |
+| --- | --- | --- | --- |
+| `buyerId` | `Guid` | Sim | Identificador do comprador. |
+| `sellerId` | `Guid` | Sim | Identificador do vendedor. |
+| `destination` | `AddressDto` | Sim | Endereço de destino. |
+| `items` | Lista de `ShippingPromiseItemDto` | Sim | Itens que compõem a entrega. |
+
+### `AddressDto`
+
+| Campo | Tipo | Obrigatório | Descrição |
+| --- | --- | --- | --- |
+| `zipCode` | `string` | Sim | CEP ou código postal. |
+| `city` | `string` | Sim | Cidade de destino. |
+| `state` | `string` | Sim | Estado/UF. |
+| `country` | `string` | Sim | País, por exemplo `BR`. |
+
+### `ShippingPromiseItemDto`
+
+| Campo | Tipo | Obrigatório | Descrição |
+| --- | --- | --- | --- |
+| `skuId` | `Guid` | Sim | Identificador do SKU. |
+| `quantity` | `int` | Sim | Quantidade solicitada. Deve ser maior que zero. |
+| `unitPrice` | `decimal` | Sim | Preço unitário do item informado pelo checkout. |
+
+### `ShippingPromiseResponse`
+
+| Campo | Tipo | Descrição |
+| --- | --- | --- |
+| `available` | `bool` | Indica se existe promessa disponível. |
+| `promiseId` | `string?` | Identificador gerado para a promessa. Nulo quando indisponível. |
+| `mode` | `string?` | Modal logístico selecionado. Nulo quando indisponível. |
+| `carrier` | `string?` | Transportadora selecionada. Nulo quando indisponível. |
+| `estimatedDeliveryDate` | `DateOnly?` | Data estimada de entrega. Nula quando indisponível. |
+| `cost` | `decimal?` | Custo final do frete. Nulo quando indisponível. |
+| `source` | `string` | Origem da resposta: `Calculated`, `Cache` ou `Fallback`. |
+| `unavailableReason` | `string?` | Motivo de indisponibilidade. Nulo quando há promessa disponível. |
+
+---
+
+## Regras de negócio
+
+### Validação de entrada
+
+A requisição é rejeitada por exceção de argumento quando:
+
+- A requisição é nula.
+- `buyerId` é `Guid.Empty`.
+- `sellerId` é `Guid.Empty`.
+- `destination` é nulo.
+- `items` é nulo ou vazio.
+- `destination.zipCode` está vazio ou em branco.
+- Algum item possui `quantity <= 0`.
+
+### Informações de produto
+
+- O serviço consulta informações físicas dos SKUs em lote.
+- Se o Product Catalog não retornar dados para todos os SKUs, a promessa fica indisponível com motivo `Product information unavailable`.
+- Se algum item for restrito (`isRestricted = true`), a promessa fica indisponível com motivo `Restricted item`.
+
+### Cálculo do pacote
+
+O cálculo consolida:
+
+- Peso total real (`TotalWeightKg`).
+- Peso cúbico (`CubicWeightKg`).
+- Maior altura entre os itens.
+- Maior largura entre os itens.
+- Soma dos comprimentos multiplicados pela quantidade.
+- Presença de item frágil.
+- Presença de item restrito.
+
+Fórmula utilizada para peso cúbico:
+
+```text
+peso_cubico = (altura_maxima_cm * largura_maxima_cm * comprimento_total_cm) / 6000
+```
+
+### Seleção de centros de fulfillment
+
+Para cada centro de fulfillment candidato:
+
+1. O centro precisa ter capacidade (`hasCapacity = true`).
+2. O centro precisa possuir estoque suficiente para todos os itens da requisição.
+3. Apenas então o serviço consulta rotas para aquela origem.
+
+### Construção dos candidatos de entrega
+
+Um candidato é criado quando:
+
+- A rota está marcada como disponível.
+- A transportadora está disponível para o destino.
+- O preço de frete foi consultado.
+
+O custo final do candidato é calculado como:
+
+```text
+custo_final = cost - discount
+```
+
+Quando o desconto é nulo, considera-se desconto zero.
+
+### Cálculo da data estimada
+
+A data estimada depende do horário de corte (`cutoffTime`) do fulfillment center e dos dias de trânsito (`transitDays`) da rota.
+
+```text
+se horário_atual_utc > cutoffTime:
+    data_inicio = amanhã
+senão:
+    data_inicio = hoje
+
+data_estimada = data_inicio + transitDays
+```
+
+### Escolha do melhor candidato
+
+O `DeliveryDecisionEngine` ordena os candidatos por:
+
+1. Menor data estimada de entrega.
+2. Menor custo de frete.
+3. Menor prioridade numérica.
+
+O primeiro candidato dessa ordenação é selecionado.
+
+### Indisponibilidade
+
+A resposta fica indisponível quando:
+
+- Faltam informações físicas de produto.
+- Existe item restrito.
+- Não há rota ou estoque disponível.
+- Há falha temporária sem possibilidade de fallback.
+
+---
+
+## Integrações externas
+
+As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceHandler()` e timeouts curtos configurados no bootstrap da aplicação.
+
+### Product Catalog
+
+- **Base URL**: `Services:ProductCatalog`
+- **Endpoint chamado**: `POST /products/physical-info/batch`
+- **Objetivo**: obter dados físicos dos SKUs.
+- **Request enviada**:
+
+```json
+{
+  "skuIds": ["33333333-3333-3333-3333-333333333333"]
+}
+```
+
+- **Resposta esperada**:
+
+```json
+[
+  {
+    "skuId": "33333333-3333-3333-3333-333333333333",
+    "weightKg": 1.2,
+    "heightCm": 10,
+    "widthCm": 20,
+    "lengthCm": 30,
+    "category": "electronics",
+    "isFragile": false,
+    "isRestricted": false
+  }
+]
+```
+
+### Inventory
+
+- **Base URL**: `Services:Inventory`
+- **Endpoint chamado**: `POST /inventory/availability`
+- **Objetivo**: consultar disponibilidade por SKU e centro de fulfillment.
+- **Request enviada**:
+
+```json
+{
+  "sellerId": "22222222-2222-2222-2222-222222222222",
+  "skuIds": ["33333333-3333-3333-3333-333333333333"]
+}
+```
+
+- **Resposta esperada**:
+
+```json
+[
+  {
+    "skuId": "33333333-3333-3333-3333-333333333333",
+    "fulfillmentCenterId": "44444444-4444-4444-4444-444444444444",
+    "availableQuantity": 10
+  }
+]
+```
+
+### Fulfillment
+
+- **Base URL**: `Services:Fulfillment`
+- **Endpoint chamado**: `POST /fulfillment/candidates`
+- **Objetivo**: localizar centros candidatos para vendedor e destino.
+- **Request enviada**:
+
+```json
+{
+  "sellerId": "22222222-2222-2222-2222-222222222222",
+  "destination": {
+    "zipCode": "01310-100",
+    "city": "São Paulo",
+    "state": "SP",
+    "country": "BR"
+  }
+}
+```
+
+- **Resposta esperada**:
+
+```json
+[
+  {
+    "fulfillmentCenterId": "44444444-4444-4444-4444-444444444444",
+    "region": "SP",
+    "cutoffTime": "18:00:00",
+    "hasCapacity": true,
+    "capacityScore": 1
+  }
+]
+```
+
+### Routing
+
+- **Base URL**: `Services:Routing`
+- **Endpoint chamado**: `POST /routes/search`
+- **Objetivo**: listar rotas disponíveis para origem, destino e pacote.
+- **Request enviada**:
+
+```json
+{
+  "originFulfillmentCenterId": "44444444-4444-4444-4444-444444444444",
+  "destination": {
+    "zipCode": "01310-100",
+    "city": "São Paulo",
+    "state": "SP",
+    "country": "BR"
+  },
+  "package": {
+    "totalWeightKg": 1.2,
+    "cubicWeightKg": 1.0,
+    "heightCm": 10,
+    "widthCm": 20,
+    "lengthCm": 30,
+    "hasFragileItem": false,
+    "hasRestrictedItem": false
+  }
+}
+```
+
+- **Resposta esperada**:
+
+```json
+[
+  {
+    "carrier": "MELI_LOGISTICS",
+    "transitDays": 2,
+    "available": true,
+    "priority": 1
+  }
+]
+```
+
+### Carrier
+
+- **Base URL**: `Services:Carrier`
+- **Endpoint chamado**: `POST /carriers/availability`
+- **Objetivo**: verificar se uma transportadora atende o destino.
+- **Request enviada**:
+
+```json
+{
+  "carrier": "MELI_LOGISTICS",
+  "destination": {
+    "zipCode": "01310-100",
+    "city": "São Paulo",
+    "state": "SP",
+    "country": "BR"
+  }
+}
+```
+
+- **Resposta esperada**:
+
+```json
+{
+  "available": true
+}
+```
+
+### Pricing
+
+- **Base URL**: `Services:Pricing`
+- **Endpoint chamado**: `POST /shipping/prices/quote`
+- **Objetivo**: calcular preço de frete para modal, carrier e pacote.
+- **Request enviada**:
+
+```json
+{
+  "mode": "Fulfillment",
+  "carrier": "MELI_LOGISTICS",
+  "package": {
+    "totalWeightKg": 1.2,
+    "cubicWeightKg": 1.0,
+    "heightCm": 10,
+    "widthCm": 20,
+    "lengthCm": 30,
+    "hasFragileItem": false,
+    "hasRestrictedItem": false
+  }
+}
+```
+
+- **Resposta esperada**:
+
+```json
+{
+  "cost": 19.90,
+  "discount": 7.00
+}
+```
+
+### Comportamento em falhas HTTP
+
+Quando uma integração retorna status não bem-sucedido, o client registra warning e retorna um valor seguro:
+
+| Integração | Retorno seguro |
+| --- | --- |
+| Product Catalog | Lista vazia. |
+| Inventory | Lista vazia. |
+| Fulfillment | Lista vazia. |
+| Routing | Lista vazia. |
+| Carrier | `false`. |
+| Pricing | Preço `0` e desconto `null`. |
+
+---
+
+## Cache Redis
+
+O Redis armazena a promessa final com TTL curto de **60 segundos**.
+
+### Por que o TTL é curto?
+
+Promessas de entrega envelhecem rapidamente porque dependem de:
+
+- Estoque.
+- Capacidade de fulfillment center.
+- Horário de corte.
+- Disponibilidade de rota.
+- Disponibilidade de transportadora.
+- Destino e região.
+- Política de preço e desconto de frete.
+
+### Chave de cache
+
+A chave é criada a partir de:
+
+- `sellerId`.
+- `destination.zipCode`.
+- `destination.state`.
+- `destination.country`.
+- Lista de SKUs e quantidades, ordenada por `skuId`.
+
+O valor bruto é convertido em SHA-256 e prefixado com `promise:`.
+
+Formato final:
+
+```text
+promise:{SHA256}
+```
+
+> Observação: `buyerId` e `unitPrice` não fazem parte da chave de cache atual.
+
+---
+
+## Auditoria em PostgreSQL
+
+A cada promessa calculada ou fallback aplicado, o serviço salva uma auditoria.
+
+### Tabela
+
+```sql
+CREATE TABLE shipping_promise_audits (
+    id UUID PRIMARY KEY,
+    request_json JSONB NOT NULL,
+    response_json JSONB NOT NULL,
+    candidates_json JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+```
+
+### Campos
+
+| Campo | Tipo | Descrição |
+| --- | --- | --- |
+| `id` | `UUID` | Identificador da auditoria. |
+| `request_json` | `JSONB` | Requisição original recebida pelo serviço. |
+| `response_json` | `JSONB` | Resposta retornada ao checkout. |
+| `candidates_json` | `JSONB` | Candidatos avaliados pelo motor de decisão. |
+| `created_at` | `TIMESTAMP WITH TIME ZONE` | Data/hora UTC de criação da auditoria. |
+
+O script mínimo de criação da tabela está em `Infrastructure/Persistence/schema.sql`.
+
+---
+
+## Fallback operacional
+
+O fallback é conservador por design.
+
+Quando ocorre uma exceção durante o cálculo:
+
+1. O erro é registrado como warning.
+2. O serviço tenta montar uma promessa fallback.
+3. O fallback só é criado para destinos cujo país é `BR`.
+4. A promessa fallback usa:
+   - Modal: `SellerShipping`.
+   - Carrier: `DEFAULT_CARRIER`.
+   - Prazo: data atual UTC + 7 dias.
+   - Custo: `29.90`.
+   - Prioridade: `999`.
+   - Source: `Fallback`.
+5. A decisão fallback também é auditada no PostgreSQL.
+
+Se o destino não for Brasil ou o fallback não puder ser criado, a resposta será indisponível com motivo:
+
+```text
+Shipping promise temporarily unavailable
+```
+
+---
+
+## Configuração
+
+As configurações podem ser fornecidas por `appsettings.json`, `appsettings.Development.json`, variáveis de ambiente ou user secrets.
+
+### Exemplo de configuração
 
 ```json
 {
@@ -128,48 +720,185 @@ Configure os valores abaixo em `appsettings.json`, variáveis de ambiente ou use
     "Routing": "https://routing.local",
     "Carrier": "https://carrier.local",
     "Pricing": "https://pricing.local"
-  }
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*"
 }
 ```
 
-## Banco de dados
+### Variáveis de ambiente equivalentes
 
-A auditoria das decisões é armazenada na tabela `shipping_promise_audits`.
-
-O schema mínimo está em:
-
-```text
-Infrastructure/Persistence/schema.sql
+```bash
+ConnectionStrings__ShippingPromiseDb='Host=localhost;Port=5432;Database=shipping_promise;Username=postgres;Password=postgres'
+ConnectionStrings__Redis='localhost:6379'
+Services__ProductCatalog='https://product-catalog.local'
+Services__Inventory='https://inventory.local'
+Services__Fulfillment='https://fulfillment.local'
+Services__Routing='https://routing.local'
+Services__Carrier='https://carrier.local'
+Services__Pricing='https://pricing.local'
 ```
 
-Campos persistidos:
+### Timeouts HTTP configurados
 
-- `request_json`: requisição original.
-- `response_json`: resposta retornada ao checkout.
-- `candidates_json`: candidatos avaliados pelo motor de decisão.
-- `created_at`: data/hora da auditoria.
+| Integração | Timeout |
+| --- | --- |
+| Product Catalog | 500 ms |
+| Inventory | 600 ms |
+| Fulfillment | 600 ms |
+| Routing | 700 ms |
+| Carrier | 500 ms |
+| Pricing | 500 ms |
 
-## Cache
+---
 
-O Redis armazena a promessa final com TTL curto, pois o resultado depende de informações que envelhecem rapidamente:
+## Execução local
 
-- estoque;
-- capacidade do fulfillment center;
-- cutoff logístico;
-- disponibilidade de transportadora;
-- destino e região;
-- preço de frete.
+### Pré-requisitos
 
-## Fallback
+- .NET SDK 8.x.
+- PostgreSQL disponível.
+- Redis disponível.
+- Serviços externos ou mocks compatíveis com os contratos descritos nesta documentação.
 
-O fallback é propositalmente conservador. Em caso de falha temporária, o serviço pode retornar uma promessa mais lenta e segura para destinos no Brasil, sem prometer entregas agressivas sem confiança operacional.
+### Preparar banco de dados
 
-## Executando
+Crie o banco e execute o script:
+
+```bash
+psql "Host=localhost;Port=5432;Database=shipping_promise;Username=postgres;Password=postgres" \
+  -f Infrastructure/Persistence/schema.sql
+```
+
+### Restaurar dependências
 
 ```bash
 dotnet restore
+```
+
+### Compilar
+
+```bash
 dotnet build
+```
+
+### Executar
+
+```bash
 dotnet run
 ```
 
-Após iniciar a aplicação, use o arquivo `ShippingPromiseService.http` para testar o health check e o cálculo de promessa.
+Por padrão, o perfil de desenvolvimento do projeto expõe a aplicação em endereço definido em `Properties/launchSettings.json`.
+
+---
+
+## Swagger e arquivo HTTP
+
+Em ambiente `Development`, a aplicação habilita:
+
+- Swagger JSON.
+- Swagger UI.
+
+Também existe o arquivo `ShippingPromiseService.http`, com exemplos para:
+
+- `GET /health`.
+- `POST /shipping-promises/`.
+
+Esse arquivo pode ser executado por IDEs como Visual Studio, Rider ou extensões REST Client compatíveis.
+
+---
+
+## Observabilidade e resiliência
+
+### Logs
+
+Os clients HTTP registram warning quando uma dependência externa retorna status HTTP não bem-sucedido.
+
+O serviço principal registra warning quando ocorre exceção no cálculo da promessa e o fluxo precisa tentar fallback.
+
+### Health check
+
+O endpoint `/health` utiliza o mecanismo de health checks do ASP.NET Core e inclui validação do `ShippingPromiseDbContext`.
+
+### Resiliência HTTP
+
+Todos os clients HTTP tipados usam `AddStandardResilienceHandler()`, adicionando políticas padrão de resiliência para chamadas externas.
+
+---
+
+## Estrutura de pastas
+
+```text
+.
+├── Api/
+│   └── ShippingPromiseEndpoints.cs
+├── Application/
+│   ├── CacheKeyFactory.cs
+│   ├── DeliveryDecisionEngine.cs
+│   ├── FallbackEngine.cs
+│   ├── PackageCalculator.cs
+│   ├── ShippingPromiseApplicationService.cs
+│   └── Ports/
+├── Contracts/
+│   ├── ShippingPromiseRequest.cs
+│   └── ShippingPromiseResponse.cs
+├── Domain/
+│   ├── DeliveryCandidate.cs
+│   ├── ShippingMode.cs
+│   └── ShippingPromise.cs
+├── Infrastructure/
+│   ├── Cache/
+│   ├── Clients/
+│   └── Persistence/
+├── Program.cs
+├── ShippingPromiseService.csproj
+├── ShippingPromiseService.http
+├── appsettings.json
+└── README.md
+```
+
+### Responsabilidades por camada
+
+| Camada | Responsabilidade |
+| --- | --- |
+| `Api` | Mapeamento de endpoints HTTP. |
+| `Contracts` | DTOs de entrada e saída da API. |
+| `Application` | Orquestração dos casos de uso e regras de aplicação. |
+| `Application/Ports` | Interfaces e contratos internos para dependências externas. |
+| `Domain` | Modelos e conceitos de domínio logístico. |
+| `Infrastructure/Clients` | Implementações HTTP dos ports externos. |
+| `Infrastructure/Cache` | Implementação de cache Redis. |
+| `Infrastructure/Persistence` | EF Core, entidade de auditoria, repositório e schema SQL. |
+
+---
+
+## Limitações e pontos de atenção
+
+- O endpoint `POST /shipping-promises/` sempre retorna `200 OK` para respostas de negócio, inclusive indisponibilidade logística.
+- As validações lançam `ArgumentException`; a aplicação usa `UseExceptionHandler()`, mas não há middleware customizado de conversão explícita para `400` no código atual.
+- A chave de cache não inclui `buyerId` nem `unitPrice`.
+- O cache só é gravado para promessas calculadas com sucesso, não para indisponibilidades nem fallback.
+- A auditoria é gravada para promessas calculadas com sucesso e fallback; indisponibilidades retornadas antes da seleção de candidatos não são auditadas no fluxo atual.
+- O cálculo usa `DateTime.UtcNow` e `TimeOnly` para comparar o cutoff; garanta alinhamento de timezone com os serviços de fulfillment.
+- O preço padrão retornado pelo client de Pricing em falha HTTP é zero, mas falhas por exceção entram no fluxo de fallback.
+- Não há testes automatizados presentes no repositório atualmente.
+
+---
+
+## Exemplo completo de operação
+
+1. O checkout envia comprador, vendedor, destino e SKUs.
+2. O serviço verifica se já existe promessa recente no Redis.
+3. Em cache miss, o serviço consulta catálogo, estoque e fulfillment em paralelo.
+4. O serviço calcula o pacote com dimensões agregadas.
+5. Para cada fulfillment center com capacidade, valida estoque total.
+6. Para cada rota disponível, valida transportadora e preço.
+7. O Decision Engine seleciona a opção com menor prazo, menor custo e melhor prioridade.
+8. A promessa é cacheada por 60 segundos.
+9. A decisão é auditada em PostgreSQL.
+10. O checkout recebe uma resposta com `available = true` ou o motivo de indisponibilidade.
