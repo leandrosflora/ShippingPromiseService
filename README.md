@@ -16,6 +16,7 @@ Documentação em português (pt-BR) do microserviço **ShippingPromiseService**
 - [Integrações externas](#integrações-externas)
 - [Cache Redis](#cache-redis)
 - [Auditoria em PostgreSQL](#auditoria-em-postgresql)
+- [Kafka](#kafka)
 - [Fallback operacional](#fallback-operacional)
 - [Configuração](#configuração)
 - [Execução local](#execução-local)
@@ -82,6 +83,7 @@ Componentes principais:
 - **Clients HTTP resilientes**: integram com Product Catalog, Inventory, Fulfillment, Routing, Carrier e Pricing.
 - **Redis**: armazena promessas finais por TTL curto.
 - **PostgreSQL**: armazena auditoria das decisões.
+- **Kafka**: publica o evento canônico `shipping.promise.calculated` após uma promessa disponível ser calculada com sucesso, usando o envelope padrão da arquitetura Meli Envios.
 - **Health Checks**: validam a saúde da aplicação e do `DbContext`.
 - **Swagger/OpenAPI**: disponível em ambiente de desenvolvimento.
 
@@ -151,6 +153,8 @@ Seleciona o melhor candidato
 Grava cache com TTL curto
     ↓
 Grava auditoria no PostgreSQL
+    ↓
+Publica `shipping.promise.calculated` no Kafka com o mesmo `X-Correlation-Id` da requisição
     ↓
 Retorna promessa ao checkout
 ```
@@ -695,6 +699,84 @@ O script mínimo de criação da tabela está em `Infrastructure/Persistence/sch
 
 ---
 
+## Kafka
+
+O serviço publica eventos reais no Kafka usando `Confluent.Kafka`, sem acoplar a regra de negócio ao client do broker. A camada `Application` depende do port `IShippingPromiseEventPublisher`; a implementação concreta fica em `Infrastructure/Messaging`.
+
+### Evento publicado
+
+| Campo | Valor |
+| --- | --- |
+| Tópico | `shipping.promise.calculated` |
+| `eventType` | `shipping.promise.calculated` |
+| `producer` | `shipping-promise-service` |
+| Consumidores esperados no contrato | `checkout-service`, `audit-service`, `analytics` |
+
+A publicação ocorre somente depois de uma promessa disponível ser calculada e auditada. Respostas vindas de cache não republicam o evento, pois não representam um novo cálculo. Indisponibilidades logísticas também não publicam `shipping.promise.calculated`.
+
+### Envelope do evento
+
+O payload é serializado em JSON com o envelope canônico definido na arquitetura Meli Envios:
+
+```json
+{
+  "eventId": "9a2a3d5e-1f6d-4a9e-9a7d-93482f4d3a7c",
+  "eventType": "shipping.promise.calculated",
+  "schemaVersion": "1.0",
+  "occurredAt": "2026-06-14T12:00:00Z",
+  "correlationId": "corr-123",
+  "producer": "shipping-promise-service",
+  "payload": {
+    "buyerId": "11111111-1111-1111-1111-111111111111",
+    "sellerId": "22222222-2222-2222-2222-222222222222",
+    "destination": {
+      "zipCode": "01310-100",
+      "city": "São Paulo",
+      "state": "SP",
+      "country": "BR"
+    },
+    "items": [],
+    "promiseId": "promise_9f5c2a",
+    "mode": "FULFILLMENT",
+    "carrier": "MELI_LOGISTICS",
+    "estimatedDeliveryDate": "2026-06-10",
+    "cost": 12.90,
+    "source": "Calculated"
+  }
+}
+```
+
+O `correlationId` vem do header HTTP `X-Correlation-Id`; quando o header não é enviado, o serviço usa o `TraceIdentifier` da requisição. Os logs de publicação e falha incluem tópico, message key, `eventType` e `correlationId`.
+
+### Configuração local
+
+O broker Kafka local exposto pelo `docker-compose` do repositório de arquitetura deve ser acessado pelos microserviços fora do Docker em `localhost:9092`. O Kafka UI fica em `http://localhost:8088` e não deve ser usado como broker.
+
+```json
+{
+  "Kafka": {
+    "BootstrapServers": "localhost:9092",
+    "ConsumerGroupId": "shipping-promise-service",
+    "Topics": {
+      "ShippingPromiseCalculated": "shipping.promise.calculated"
+    }
+  }
+}
+```
+
+### Como validar no Kafka UI
+
+1. Suba a stack local do repositório `meli-envios-architecture`, garantindo que o broker esteja disponível em `localhost:9092`.
+2. Execute este serviço com `dotnet run`.
+3. Envie uma requisição `POST /shipping-promises/` com o header `X-Correlation-Id`.
+4. Abra `http://localhost:8088`.
+5. Acesse o tópico `shipping.promise.calculated`.
+6. Confira se a mensagem contém o envelope com `eventType = shipping.promise.calculated`, `producer = shipping-promise-service` e o mesmo `correlationId` enviado na requisição.
+
+Falhas temporárias de Kafka são registradas como warning e não devem derrubar a resposta HTTP síncrona, pois a integração assíncrona complementa o fluxo já existente do checkout.
+
+---
+
 ## Fallback operacional
 
 O fallback é conservador por design.
@@ -741,6 +823,13 @@ As configurações podem ser fornecidas por `appsettings.json`, `appsettings.Dev
     "Carrier": "https://carrier.local",
     "Pricing": "https://pricing.local"
   },
+  "Kafka": {
+    "BootstrapServers": "localhost:9092",
+    "ConsumerGroupId": "shipping-promise-service",
+    "Topics": {
+      "ShippingPromiseCalculated": "shipping.promise.calculated"
+    }
+  },
   "Logging": {
     "LogLevel": {
       "Default": "Information",
@@ -762,6 +851,9 @@ Services__Fulfillment='https://fulfillment.local'
 Services__Routing='https://routing.local'
 Services__Carrier='https://carrier.local'
 Services__Pricing='https://pricing.local'
+Kafka__BootstrapServers='localhost:9092'
+Kafka__ConsumerGroupId='shipping-promise-service'
+Kafka__Topics__ShippingPromiseCalculated='shipping.promise.calculated'
 ```
 
 ### Timeouts HTTP configurados
@@ -784,6 +876,7 @@ Services__Pricing='https://pricing.local'
 - .NET SDK 8.x.
 - PostgreSQL disponível.
 - Redis disponível.
+- Kafka disponível em `localhost:9092` para validar a integração assíncrona.
 - Serviços externos ou mocks compatíveis com os contratos descritos nesta documentação.
 
 ### Preparar banco de dados
@@ -812,6 +905,19 @@ dotnet build
 ```bash
 dotnet run
 ```
+
+### Testar publicação Kafka
+
+Com a aplicação em execução e Kafka local em `localhost:9092`, envie uma requisição com correlação explícita:
+
+```bash
+curl -X POST http://localhost:5000/shipping-promises/ \
+  -H 'Content-Type: application/json' \
+  -H 'X-Correlation-Id: local-e2e-001' \
+  -d @request.json
+```
+
+Depois valide a mensagem no Kafka UI em `http://localhost:8088`, no tópico `shipping.promise.calculated`.
 
 Por padrão, o perfil de desenvolvimento do projeto expõe a aplicação em endereço definido em `Properties/launchSettings.json`.
 
@@ -874,6 +980,7 @@ Todos os clients HTTP tipados usam `AddStandardResilienceHandler()`, adicionando
 ├── Infrastructure/
 │   ├── Cache/
 │   ├── Clients/
+│   ├── Messaging/
 │   └── Persistence/
 ├── Program.cs
 ├── ShippingPromiseService.csproj
@@ -892,6 +999,7 @@ Todos os clients HTTP tipados usam `AddStandardResilienceHandler()`, adicionando
 | `Application/Ports` | Interfaces e contratos internos para dependências externas. |
 | `Domain` | Modelos e conceitos de domínio logístico. |
 | `Infrastructure/Clients` | Implementações HTTP dos ports externos. |
+| `Infrastructure/Messaging` | Implementação Kafka do producer `shipping.promise.calculated`. |
 | `Infrastructure/Cache` | Implementação de cache Redis. |
 | `Infrastructure/Persistence` | EF Core, entidade de auditoria, repositório e schema SQL. |
 
@@ -907,6 +1015,7 @@ Todos os clients HTTP tipados usam `AddStandardResilienceHandler()`, adicionando
 - O cálculo usa `DateTime.UtcNow` e `TimeOnly` para comparar o cutoff; garanta alinhamento de timezone com os serviços de fulfillment.
 - O preço padrão retornado pelo client de Pricing em falha HTTP é zero, mas falhas por exceção entram no fluxo de fallback.
 - Não há testes automatizados presentes no repositório atualmente.
+- Não há outbox transacional neste repositório; a publicação Kafka é best-effort após auditoria e falhas são registradas sem interromper indevidamente o fluxo HTTP síncrono.
 
 ---
 

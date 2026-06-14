@@ -5,6 +5,7 @@ using ShippingPromiseService.Application;
 using ShippingPromiseService.Application.Ports;
 using ShippingPromiseService.Infrastructure.Cache;
 using ShippingPromiseService.Infrastructure.Clients;
+using ShippingPromiseService.Infrastructure.Messaging;
 using ShippingPromiseService.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -12,6 +13,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddOptions<KafkaOptions>()
+    .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 builder.Services.AddDbContext<ShippingPromiseDbContext>(options =>
 {
@@ -31,6 +37,7 @@ builder.Services.AddScoped<FallbackEngine>();
 
 builder.Services.AddScoped<IShippingPromiseCache, RedisShippingPromiseCache>();
 builder.Services.AddScoped<IShippingPromiseAuditRepository, ShippingPromiseAuditRepository>();
+builder.Services.AddSingleton<IShippingPromiseEventPublisher, KafkaShippingPromiseEventPublisher>();
 
 builder.Services.AddHttpClient<IProductCatalogClient, ProductCatalogClient>(client =>
 {
