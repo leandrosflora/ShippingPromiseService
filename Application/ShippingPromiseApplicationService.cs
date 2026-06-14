@@ -108,6 +108,7 @@ public sealed class ShippingPromiseApplicationService
             var candidates = await BuildCandidatesAsync(
                 request,
                 package,
+                products,
                 inventory,
                 fulfillmentCenters,
                 cancellationToken);
@@ -146,6 +147,7 @@ public sealed class ShippingPromiseApplicationService
     private async Task<IReadOnlyList<DeliveryCandidate>> BuildCandidatesAsync(
         ShippingPromiseRequest request,
         PackageData package,
+        IReadOnlyList<ProductPhysicalInfo> products,
         IReadOnlyList<InventoryAvailability> inventory,
         IReadOnlyList<FulfillmentCandidate> fulfillmentCenters,
         CancellationToken cancellationToken)
