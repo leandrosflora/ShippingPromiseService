@@ -183,9 +183,11 @@ public sealed class ShippingPromiseApplicationService
                 var mode = ResolveMode(route);
 
                 var price = await _pricingClient.GetPriceAsync(
+                    request,
                     mode,
                     route,
                     package,
+                    ResolvePackageCategory(products),
                     cancellationToken);
 
                 var estimatedDate = CalculateEstimatedDeliveryDate(
@@ -205,6 +207,17 @@ public sealed class ShippingPromiseApplicationService
         }
 
         return candidates;
+    }
+
+    private static string ResolvePackageCategory(IReadOnlyList<ProductPhysicalInfo> products)
+    {
+        var categories = products
+            .Select(product => product.Category)
+            .Where(category => !string.IsNullOrWhiteSpace(category))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return categories.Count == 1 ? categories[0] : "mixed";
     }
 
     private static ShippingPromiseResponse ToResponse(ShippingPromise promise)
