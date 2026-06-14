@@ -83,7 +83,7 @@ Componentes principais:
 - **Clients HTTP resilientes**: integram com Product Catalog, Inventory, Fulfillment, Routing, Carrier e Pricing.
 - **Redis**: armazena promessas finais por TTL curto.
 - **PostgreSQL**: armazena auditoria das decisões.
-- **Kafka**: publica o evento canônico `shipping.promise.calculated` após uma promessa disponível ser calculada com sucesso, usando o envelope padrão da arquitetura Meli Envios.
+- **Kafka**: consome `checkout.shipping.quote.requested` e publica `shipping.promise.calculated` após uma promessa disponível ser calculada ou recuperada do cache para uma solicitação assíncrona, usando o envelope padrão da arquitetura Meli Envios.
 - **Health Checks**: validam a saúde da aplicação e do `DbContext`.
 - **Swagger/OpenAPI**: disponível em ambiente de desenvolvimento.
 
@@ -154,7 +154,7 @@ Grava cache com TTL curto
     ↓
 Grava auditoria no PostgreSQL
     ↓
-Publica `shipping.promise.calculated` no Kafka com o mesmo `X-Correlation-Id` da requisição
+Publica `shipping.promise.calculated` no Kafka com o mesmo `X-Correlation-Id` da requisição quando houver `checkoutId`
     ↓
 Retorna promessa ao checkout
 ```
@@ -701,7 +701,41 @@ O script mínimo de criação da tabela está em `Infrastructure/Persistence/sch
 
 ## Kafka
 
-O serviço publica eventos reais no Kafka usando `Confluent.Kafka`, sem acoplar a regra de negócio ao client do broker. A camada `Application` depende do port `IShippingPromiseEventPublisher`; a implementação concreta fica em `Infrastructure/Messaging`.
+O serviço fecha o fluxo assíncrono com o `CheckoutService` via Kafka usando `Confluent.Kafka`, sem acoplar a regra de negócio ao client do broker. A camada `Application` depende do port `IShippingPromiseEventPublisher`; consumers e producers concretos ficam em `Infrastructure/Messaging`.
+
+### Evento consumido
+
+| Campo | Valor |
+| --- | --- |
+| Tópico | `checkout.shipping.quote.requested` |
+| `eventType` | `checkout.shipping.quote.requested` |
+| Consumer group | `shipping-promise-service` |
+
+O consumer `ShippingQuoteRequestedConsumer` roda como `BackgroundService`, valida o `eventType`, desserializa o envelope canônico, exige `checkoutId` válido para o fluxo Kafka, mapeia o payload para o request interno de cálculo e chama `ShippingPromiseApplicationService.CalculateAsync` propagando o `correlationId` do envelope. O offset é commitado manualmente somente após o processamento bem-sucedido. Payloads inválidos são logados como erro estruturado e commitados para não travar a partição no E2E local.
+
+Payload recebido em `payload`:
+
+```json
+{
+  "checkoutId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "buyerId": "11111111-1111-1111-1111-111111111111",
+  "sellerId": "22222222-2222-2222-2222-222222222222",
+  "destination": {
+    "zipCode": "05700-000",
+    "city": "São Paulo",
+    "state": "SP",
+    "country": "BR"
+  },
+  "items": [
+    {
+      "skuId": "33333333-3333-3333-3333-333333333333",
+      "sellerId": "22222222-2222-2222-2222-222222222222",
+      "quantity": 1,
+      "unitPrice": 129.90
+    }
+  ]
+}
+```
 
 ### Evento publicado
 
@@ -712,11 +746,28 @@ O serviço publica eventos reais no Kafka usando `Confluent.Kafka`, sem acoplar 
 | `producer` | `shipping-promise-service` |
 | Consumidores esperados no contrato | `checkout-service`, `audit-service`, `analytics` |
 
-A publicação ocorre somente depois de uma promessa disponível ser calculada e auditada. Respostas vindas de cache não republicam o evento, pois não representam um novo cálculo. Indisponibilidades logísticas também não publicam `shipping.promise.calculated`.
+A publicação ocorre quando existe promessa disponível. No fluxo HTTP síncrono sem `checkoutId`, o serviço mantém compatibilidade e publica com `checkoutId = Guid.Empty` quando não há alternativa. No fluxo Kafka, o `checkoutId` é obrigatório e é propagado no evento `shipping.promise.calculated` para que o `CheckoutService` associe a promessa ao checkout correto. Quando a promessa vem do cache em uma entrada Kafka, o evento também é publicado, pois o checkout precisa da resposta assíncrona mesmo sem novo cálculo.
+
+Payload publicado em `payload`:
+
+```json
+{
+  "checkoutId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "buyerId": "11111111-1111-1111-1111-111111111111",
+  "sellerId": "22222222-2222-2222-2222-222222222222",
+  "promiseId": "promise_9f5c2a",
+  "mode": "FULFILLMENT",
+  "carrier": "MELI_LOGISTICS",
+  "estimatedDeliveryDate": "2026-06-15",
+  "cost": 14.90,
+  "currency": "BRL",
+  "source": "Calculated"
+}
+```
 
 ### Envelope do evento
 
-O payload é serializado em JSON com o envelope canônico definido na arquitetura Meli Envios:
+Os eventos consumidos e publicados usam o envelope canônico definido na arquitetura Meli Envios:
 
 ```json
 {
@@ -726,31 +777,13 @@ O payload é serializado em JSON com o envelope canônico definido na arquitetur
   "occurredAt": "2026-06-14T12:00:00Z",
   "correlationId": "corr-123",
   "producer": "shipping-promise-service",
-  "payload": {
-    "buyerId": "11111111-1111-1111-1111-111111111111",
-    "sellerId": "22222222-2222-2222-2222-222222222222",
-    "destination": {
-      "zipCode": "01310-100",
-      "city": "São Paulo",
-      "state": "SP",
-      "country": "BR"
-    },
-    "items": [],
-    "promiseId": "promise_9f5c2a",
-    "mode": "FULFILLMENT",
-    "carrier": "MELI_LOGISTICS",
-    "estimatedDeliveryDate": "2026-06-10",
-    "cost": 12.90,
-    "source": "Calculated"
-  }
+  "payload": {}
 }
 ```
 
-O `correlationId` vem do header HTTP `X-Correlation-Id`; quando o header não é enviado, o serviço usa o `TraceIdentifier` da requisição. Os logs de publicação e falha incluem tópico, message key, `eventType` e `correlationId`.
+O `correlationId` vem do envelope Kafka no fluxo assíncrono. No fluxo HTTP, ele vem do header `X-Correlation-Id`; quando o header não é enviado, o serviço usa o `TraceIdentifier` da requisição. Logs de consumo e publicação incluem tópico, offset ou message key, `eventType`, `checkoutId` quando disponível e `correlationId`.
 
 ### Configuração local
-
-O broker Kafka local exposto pelo `docker-compose` do repositório de arquitetura deve ser acessado pelos microserviços fora do Docker em `localhost:9092`. O Kafka UI fica em `http://localhost:8088` e não deve ser usado como broker.
 
 ```json
 {
@@ -758,6 +791,7 @@ O broker Kafka local exposto pelo `docker-compose` do repositório de arquitetur
     "BootstrapServers": "localhost:9092",
     "ConsumerGroupId": "shipping-promise-service",
     "Topics": {
+      "ShippingQuoteRequested": "checkout.shipping.quote.requested",
       "ShippingPromiseCalculated": "shipping.promise.calculated"
     }
   }
@@ -768,12 +802,12 @@ O broker Kafka local exposto pelo `docker-compose` do repositório de arquitetur
 
 1. Suba a stack local do repositório `meli-envios-architecture`, garantindo que o broker esteja disponível em `localhost:9092`.
 2. Execute este serviço com `dotnet run`.
-3. Envie uma requisição `POST /shipping-promises/` com o header `X-Correlation-Id`.
+3. Publique um envelope `checkout.shipping.quote.requested` com `checkoutId` e `correlationId`.
 4. Abra `http://localhost:8088`.
 5. Acesse o tópico `shipping.promise.calculated`.
-6. Confira se a mensagem contém o envelope com `eventType = shipping.promise.calculated`, `producer = shipping-promise-service` e o mesmo `correlationId` enviado na requisição.
+6. Confira se a mensagem contém `eventType = shipping.promise.calculated`, o mesmo `checkoutId` do payload recebido e o mesmo `correlationId` do envelope consumido.
 
-Falhas temporárias de Kafka são registradas como warning e não devem derrubar a resposta HTTP síncrona, pois a integração assíncrona complementa o fluxo já existente do checkout.
+Falhas temporárias de Kafka na publicação são registradas como warning e não devem derrubar a resposta HTTP síncrona, pois a integração assíncrona complementa o fluxo já existente do checkout.
 
 ---
 
@@ -827,6 +861,7 @@ As configurações podem ser fornecidas por `appsettings.json`, `appsettings.Dev
     "BootstrapServers": "localhost:9092",
     "ConsumerGroupId": "shipping-promise-service",
     "Topics": {
+      "ShippingQuoteRequested": "checkout.shipping.quote.requested",
       "ShippingPromiseCalculated": "shipping.promise.calculated"
     }
   },
@@ -853,6 +888,7 @@ Services__Carrier='https://carrier.local'
 Services__Pricing='https://pricing.local'
 Kafka__BootstrapServers='localhost:9092'
 Kafka__ConsumerGroupId='shipping-promise-service'
+Kafka__Topics__ShippingQuoteRequested='checkout.shipping.quote.requested'
 Kafka__Topics__ShippingPromiseCalculated='shipping.promise.calculated'
 ```
 

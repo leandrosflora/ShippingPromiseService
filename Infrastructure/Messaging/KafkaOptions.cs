@@ -18,5 +18,8 @@ public sealed class KafkaOptions
 public sealed class KafkaTopicsOptions
 {
     [Required]
+    public string ShippingQuoteRequested { get; init; } = "checkout.shipping.quote.requested";
+
+    [Required]
     public string ShippingPromiseCalculated { get; init; } = "shipping.promise.calculated";
 }

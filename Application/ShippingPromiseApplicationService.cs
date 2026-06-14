@@ -64,10 +64,17 @@ public sealed class ShippingPromiseApplicationService
 
         if (cached is not null)
         {
-            return cached with
+            var cachedResponse = cached with
             {
                 Source = "Cache"
             };
+
+            if (request.CheckoutId is { } checkoutId && checkoutId != Guid.Empty)
+            {
+                await _eventPublisher.PublishCalculatedAsync(request, cachedResponse, correlationId, cancellationToken);
+            }
+
+            return cachedResponse;
         }
 
         try
