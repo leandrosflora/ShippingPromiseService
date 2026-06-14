@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using ShippingPromiseService.Application.Ports;
 using ShippingPromiseService.Contracts;
+using ShippingPromiseService.Domain;
 
 namespace ShippingPromiseService.Infrastructure.Clients;
 
