@@ -50,7 +50,8 @@ public sealed class KafkaShippingPromiseEventPublisher : IShippingPromiseEventPu
         }
 
         var topic = _options.Topics.ShippingPromiseCalculated;
-        var messageKey = response.PromiseId;
+        var checkoutId = request.CheckoutId ?? Guid.Empty;
+        var messageKey = checkoutId != Guid.Empty ? checkoutId.ToString() : response.PromiseId;
         var envelope = new KafkaEventEnvelope<ShippingPromiseCalculatedPayload>(
             EventId: Guid.NewGuid(),
             EventType: EventType,
@@ -59,15 +60,15 @@ public sealed class KafkaShippingPromiseEventPublisher : IShippingPromiseEventPu
             CorrelationId: correlationId,
             Producer: ProducerName,
             Payload: new ShippingPromiseCalculatedPayload(
+                CheckoutId: checkoutId,
                 BuyerId: request.BuyerId,
                 SellerId: request.SellerId,
-                Destination: request.Destination,
-                Items: request.Items,
                 PromiseId: response.PromiseId,
                 Mode: response.Mode,
                 Carrier: response.Carrier,
                 EstimatedDeliveryDate: response.EstimatedDeliveryDate.Value,
                 Cost: response.Cost.Value,
+                Currency: "BRL",
                 Source: response.Source));
 
         try

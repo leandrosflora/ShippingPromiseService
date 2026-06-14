@@ -38,6 +38,7 @@ builder.Services.AddScoped<FallbackEngine>();
 builder.Services.AddScoped<IShippingPromiseCache, RedisShippingPromiseCache>();
 builder.Services.AddScoped<IShippingPromiseAuditRepository, ShippingPromiseAuditRepository>();
 builder.Services.AddSingleton<IShippingPromiseEventPublisher, KafkaShippingPromiseEventPublisher>();
+builder.Services.AddHostedService<ShippingQuoteRequestedConsumer>();
 
 builder.Services.AddHttpClient<IProductCatalogClient, ProductCatalogClient>(client =>
 {

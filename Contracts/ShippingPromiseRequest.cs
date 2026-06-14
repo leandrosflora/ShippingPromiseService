@@ -1,6 +1,7 @@
 namespace ShippingPromiseService.Contracts;
 
 public sealed record ShippingPromiseRequest(
+    Guid? CheckoutId,
     Guid BuyerId,
     Guid SellerId,
     AddressDto Destination,
