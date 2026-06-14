@@ -16,13 +16,31 @@ public sealed class CarrierClient : ICarrierClient
     }
 
     public async Task<bool> IsCarrierAvailableAsync(
-        string carrier,
+        RouteOption route,
         AddressDto destination,
+        PackageData package,
         CancellationToken cancellationToken)
     {
+        var request = new
+        {
+            checks = new[]
+            {
+                new
+                {
+                    carrierCode = route.CarrierCode,
+                    serviceLevelCode = route.ServiceLevelCode,
+                    originNodeId = route.OriginNodeId,
+                    destinationNodeId = route.DestinationNodeId,
+                    destinationPostalCode = destination.ZipCode,
+                    plannedDepartureAtUtc = DateTimeOffset.UtcNow,
+                    package = DownstreamContractAdapters.ToPackageProfile(package)
+                }
+            }
+        };
+
         using var response = await _httpClient.PostAsJsonAsync(
-            "/carriers/availability",
-            new { Carrier = carrier, Destination = destination },
+            "/carrier-availability/search",
+            request,
             cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -31,9 +49,11 @@ public sealed class CarrierClient : ICarrierClient
             return false;
         }
 
-        var availability = await response.Content.ReadFromJsonAsync<CarrierAvailabilityResponse>(cancellationToken);
-        return availability?.Available ?? false;
+        var availability = await response.Content.ReadFromJsonAsync<CarrierAvailabilityBatchResponse>(cancellationToken);
+        return availability?.Available ?? availability?.Results?.Any(x => x.Available) ?? false;
     }
 
-    private sealed record CarrierAvailabilityResponse(bool Available);
+    private sealed record CarrierAvailabilityBatchResponse(bool? Available, IReadOnlyList<CarrierAvailabilityResult>? Results);
+
+    private sealed record CarrierAvailabilityResult(bool Available);
 }

@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using ShippingPromiseService.Application.Ports;
 using ShippingPromiseService.Contracts;
+using ShippingPromiseService.Domain;
 
 namespace ShippingPromiseService.Infrastructure.Clients;
 
@@ -18,11 +19,21 @@ public sealed class FulfillmentClient : IFulfillmentClient
     public async Task<IReadOnlyList<FulfillmentCandidate>> GetCandidatesAsync(
         Guid sellerId,
         AddressDto destination,
+        PackageData package,
         CancellationToken cancellationToken)
     {
+        var request = new
+        {
+            sellerId,
+            destinationPostalCode = destination.ZipCode,
+            mode = ShippingMode.Fulfillment.ToString(),
+            package = DownstreamContractAdapters.ToPackageProfile(package),
+            requestedAtUtc = DateTimeOffset.UtcNow
+        };
+
         using var response = await _httpClient.PostAsJsonAsync(
-            "/fulfillment/candidates",
-            new { SellerId = sellerId, Destination = destination },
+            "/fulfillment-centers/candidates/search",
+            request,
             cancellationToken);
 
         if (!response.IsSuccessStatusCode)

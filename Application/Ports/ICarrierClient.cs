@@ -5,7 +5,8 @@ namespace ShippingPromiseService.Application.Ports;
 public interface ICarrierClient
 {
     Task<bool> IsCarrierAvailableAsync(
-        string carrier,
+        RouteOption route,
         AddressDto destination,
+        PackageData package,
         CancellationToken cancellationToken);
 }

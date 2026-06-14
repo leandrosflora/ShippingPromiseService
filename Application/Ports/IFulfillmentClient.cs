@@ -7,6 +7,7 @@ public interface IFulfillmentClient
     Task<IReadOnlyList<FulfillmentCandidate>> GetCandidatesAsync(
         Guid sellerId,
         AddressDto destination,
+        PackageData package,
         CancellationToken cancellationToken);
 }
 

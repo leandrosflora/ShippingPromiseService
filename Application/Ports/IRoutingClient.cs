@@ -12,7 +12,11 @@ public interface IRoutingClient
 }
 
 public sealed record RouteOption(
-    string Carrier,
+    string RouteId,
+    string OriginNodeId,
+    string? DestinationNodeId,
+    string CarrierCode,
+    string ServiceLevelCode,
     int TransitDays,
     bool Available,
     int Priority
