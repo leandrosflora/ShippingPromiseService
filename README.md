@@ -436,7 +436,7 @@ As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceH
 ### Inventory
 
 - **Base URL**: `Services:Inventory`
-- **Endpoint chamado**: `POST /inventory/availability`
+- **Endpoint chamado**: `POST /inventory/availability/batch`
 - **Objetivo**: consultar disponibilidade por SKU e centro de fulfillment.
 - **Request enviada**:
 
@@ -462,19 +462,22 @@ As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceH
 ### Fulfillment
 
 - **Base URL**: `Services:Fulfillment`
-- **Endpoint chamado**: `POST /fulfillment/candidates`
+- **Endpoint chamado**: `POST /fulfillment-centers/candidates/search`
 - **Objetivo**: localizar centros candidatos para vendedor e destino.
 - **Request enviada**:
 
 ```json
 {
   "sellerId": "22222222-2222-2222-2222-222222222222",
-  "destination": {
-    "zipCode": "01310-100",
-    "city": "São Paulo",
-    "state": "SP",
-    "country": "BR"
-  }
+  "destinationPostalCode": "01310-100",
+  "mode": "Fulfillment",
+  "package": {
+    "weightKg": 1.2,
+    "cubicWeightKg": 1.0,
+    "isFragile": false,
+    "isRestricted": false
+  },
+  "requestedAtUtc": "2026-06-10T12:00:00Z"
 }
 ```
 
@@ -501,22 +504,16 @@ As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceH
 
 ```json
 {
-  "originFulfillmentCenterId": "44444444-4444-4444-4444-444444444444",
-  "destination": {
-    "zipCode": "01310-100",
-    "city": "São Paulo",
-    "state": "SP",
-    "country": "BR"
-  },
+  "originNodeId": "44444444-4444-4444-4444-444444444444",
+  "destinationPostalCode": "01310-100",
   "package": {
-    "totalWeightKg": 1.2,
+    "weightKg": 1.2,
     "cubicWeightKg": 1.0,
-    "heightCm": 10,
-    "widthCm": 20,
-    "lengthCm": 30,
-    "hasFragileItem": false,
-    "hasRestrictedItem": false
-  }
+    "isFragile": false,
+    "isRestricted": false
+  },
+  "requestedAtUtc": "2026-06-10T12:00:00Z",
+  "maxOptions": 3
 }
 ```
 
@@ -525,7 +522,11 @@ As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceH
 ```json
 [
   {
-    "carrier": "MELI_LOGISTICS",
+    "routeId": "route-001",
+    "originNodeId": "44444444-4444-4444-4444-444444444444",
+    "destinationNodeId": "SP-CAPITAL",
+    "carrierCode": "MELI_LOGISTICS",
+    "serviceLevelCode": "STANDARD",
     "transitDays": 2,
     "available": true,
     "priority": 1
@@ -536,19 +537,28 @@ As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceH
 ### Carrier
 
 - **Base URL**: `Services:Carrier`
-- **Endpoint chamado**: `POST /carriers/availability`
+- **Endpoint chamado**: `POST /carrier-availability/search`
 - **Objetivo**: verificar se uma transportadora atende o destino.
 - **Request enviada**:
 
 ```json
 {
-  "carrier": "MELI_LOGISTICS",
-  "destination": {
-    "zipCode": "01310-100",
-    "city": "São Paulo",
-    "state": "SP",
-    "country": "BR"
-  }
+  "checks": [
+    {
+      "carrierCode": "MELI_LOGISTICS",
+      "serviceLevelCode": "STANDARD",
+      "originNodeId": "44444444-4444-4444-4444-444444444444",
+      "destinationNodeId": "SP-CAPITAL",
+      "destinationPostalCode": "01310-100",
+      "plannedDepartureAtUtc": "2026-06-10T12:00:00Z",
+      "package": {
+        "weightKg": 1.2,
+        "cubicWeightKg": 1.0,
+        "isFragile": false,
+        "isRestricted": false
+      }
+    }
+  ]
 }
 ```
 
@@ -563,23 +573,28 @@ As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceH
 ### Pricing
 
 - **Base URL**: `Services:Pricing`
-- **Endpoint chamado**: `POST /shipping/prices/quote`
+- **Endpoint chamado**: `POST /shipping-prices/quotes/batch`
 - **Objetivo**: calcular preço de frete para modal, carrier e pacote.
 - **Request enviada**:
 
 ```json
 {
-  "mode": "Fulfillment",
-  "carrier": "MELI_LOGISTICS",
-  "package": {
-    "totalWeightKg": 1.2,
-    "cubicWeightKg": 1.0,
-    "heightCm": 10,
-    "widthCm": 20,
-    "lengthCm": 30,
-    "hasFragileItem": false,
-    "hasRestrictedItem": false
-  }
+  "quotes": [
+    {
+      "candidateId": "route-001",
+      "routeId": "route-001",
+      "originNodeId": "44444444-4444-4444-4444-444444444444",
+      "carrierCode": "MELI_LOGISTICS",
+      "serviceLevelCode": "STANDARD",
+      "mode": "Fulfillment",
+      "package": {
+        "weightKg": 1.2,
+        "cubicWeightKg": 1.0,
+        "isFragile": false,
+        "isRestricted": false
+      }
+    }
+  ]
 }
 ```
 
@@ -587,8 +602,13 @@ As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceH
 
 ```json
 {
-  "cost": 19.90,
-  "discount": 7.00
+  "quotes": [
+    {
+      "candidateId": "route-001",
+      "cost": 19.90,
+      "discount": 7.00
+    }
+  ]
 }
 ```
 

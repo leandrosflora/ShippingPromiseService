@@ -82,16 +82,10 @@ public sealed class ShippingPromiseApplicationService
                 skuIds,
                 cancellationToken);
 
-            var fulfillmentTask = _fulfillmentClient.GetCandidatesAsync(
-                request.SellerId,
-                request.Destination,
-                cancellationToken);
-
-            await Task.WhenAll(productsTask, inventoryTask, fulfillmentTask);
+            await Task.WhenAll(productsTask, inventoryTask);
 
             var products = await productsTask;
             var inventory = await inventoryTask;
-            var fulfillmentCenters = await fulfillmentTask;
 
             if (products.Count != skuIds.Count)
             {
@@ -104,6 +98,12 @@ public sealed class ShippingPromiseApplicationService
             }
 
             var package = _packageCalculator.Calculate(request, products);
+
+            var fulfillmentCenters = await _fulfillmentClient.GetCandidatesAsync(
+                request.SellerId,
+                request.Destination,
+                package,
+                cancellationToken);
 
             var candidates = await BuildCandidatesAsync(
                 request,
@@ -172,8 +172,9 @@ public sealed class ShippingPromiseApplicationService
             foreach (var route in routes.Where(x => x.Available))
             {
                 var carrierAvailable = await _carrierClient.IsCarrierAvailableAsync(
-                    route.Carrier,
+                    route,
                     request.Destination,
+                    package,
                     cancellationToken);
 
                 if (!carrierAvailable)
@@ -183,7 +184,7 @@ public sealed class ShippingPromiseApplicationService
 
                 var price = await _pricingClient.GetPriceAsync(
                     mode,
-                    route.Carrier,
+                    route,
                     package,
                     cancellationToken);
 
@@ -194,7 +195,7 @@ public sealed class ShippingPromiseApplicationService
                 candidates.Add(new DeliveryCandidate(
                     Mode: mode,
                     OriginFulfillmentCenterId: fc.FulfillmentCenterId,
-                    Carrier: route.Carrier,
+                    Carrier: route.CarrierCode,
                     EstimatedDeliveryDate: estimatedDate,
                     ShippingCost: price.Cost - (price.Discount ?? 0),
                     Priority: route.Priority + fc.CapacityScore,
@@ -222,7 +223,7 @@ public sealed class ShippingPromiseApplicationService
 
     private static ShippingMode ResolveMode(RouteOption route)
     {
-        if (string.Equals(route.Carrier, "MELI_LOGISTICS", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(route.CarrierCode, "MELI_LOGISTICS", StringComparison.OrdinalIgnoreCase))
             return ShippingMode.Fulfillment;
 
         return ShippingMode.Carrier;

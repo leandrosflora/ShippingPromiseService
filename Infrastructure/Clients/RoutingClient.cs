@@ -23,9 +23,11 @@ public sealed class RoutingClient : IRoutingClient
     {
         var request = new
         {
-            OriginFulfillmentCenterId = originFulfillmentCenterId,
-            Destination = destination,
-            Package = package
+            originNodeId = originFulfillmentCenterId,
+            destinationPostalCode = destination.ZipCode,
+            package = DownstreamContractAdapters.ToPackageProfile(package),
+            requestedAtUtc = DateTimeOffset.UtcNow,
+            maxOptions = 3
         };
 
         using var response = await _httpClient.PostAsJsonAsync(

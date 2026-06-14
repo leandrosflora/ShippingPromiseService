@@ -6,7 +6,7 @@ public interface IPricingClient
 {
     Task<ShippingPrice> GetPriceAsync(
         ShippingMode mode,
-        string carrier,
+        RouteOption route,
         PackageData package,
         CancellationToken cancellationToken);
 }
