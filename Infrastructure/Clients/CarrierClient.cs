@@ -27,6 +27,7 @@ public sealed class CarrierClient : ICarrierClient
             {
                 new
                 {
+                    checkId = $"{route.RouteId}:{route.CarrierCode}:{route.ServiceLevelCode}",
                     carrierCode = route.CarrierCode,
                     serviceLevelCode = route.ServiceLevelCode,
                     originNodeId = route.OriginNodeId,

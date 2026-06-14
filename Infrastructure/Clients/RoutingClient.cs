@@ -41,7 +41,40 @@ public sealed class RoutingClient : IRoutingClient
             return Array.Empty<RouteOption>();
         }
 
-        var routes = await response.Content.ReadFromJsonAsync<List<RouteOption>>(cancellationToken);
-        return routes ?? new List<RouteOption>();
+        var searchResponse = await response.Content.ReadFromJsonAsync<SearchRoutesResponse>(cancellationToken);
+
+        return searchResponse?.Routes?
+            .Select((route, index) => MapRoute(route, index))
+            .Where(route => !string.IsNullOrWhiteSpace(route.CarrierCode))
+            .ToList() ?? new List<RouteOption>();
     }
+
+    private static RouteOption MapRoute(RouteResponse route, int index)
+    {
+        var firstLeg = route.Legs?.FirstOrDefault();
+
+        return new RouteOption(
+            route.RouteId,
+            route.OriginNodeId,
+            route.DestinationNodeId,
+            firstLeg?.CarrierCode ?? string.Empty,
+            firstLeg?.ServiceLevelCode ?? firstLeg?.Mode ?? string.Empty,
+            (int)Math.Ceiling(route.TotalElapsedMinutes / 1440m),
+            Available: true,
+            Priority: index);
+    }
+
+    private sealed record SearchRoutesResponse(IReadOnlyList<RouteResponse>? Routes);
+
+    private sealed record RouteResponse(
+        string RouteId,
+        string OriginNodeId,
+        string? DestinationNodeId,
+        int TotalElapsedMinutes,
+        IReadOnlyList<RouteLegResponse>? Legs);
+
+    private sealed record RouteLegResponse(
+        string? CarrierCode,
+        string? ServiceLevelCode,
+        string? Mode);
 }

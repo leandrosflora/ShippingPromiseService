@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using ShippingPromiseService.Application.Ports;
+using ShippingPromiseService.Contracts;
 using ShippingPromiseService.Domain;
 
 namespace ShippingPromiseService.Infrastructure.Clients;
@@ -16,18 +17,26 @@ public sealed class PricingClient : IPricingClient
     }
 
     public async Task<ShippingPrice> GetPriceAsync(
+        ShippingPromiseRequest request,
         ShippingMode mode,
         RouteOption route,
         PackageData package,
+        string packageCategory,
         CancellationToken cancellationToken)
     {
         var candidateId = string.IsNullOrWhiteSpace(route.RouteId)
             ? $"{route.OriginNodeId}:{route.CarrierCode}:{route.ServiceLevelCode}"
             : route.RouteId;
 
-        var request = new
+        var pricingRequest = new
         {
-            quotes = new[]
+            buyerId = request.BuyerId,
+            sellerId = request.SellerId,
+            destinationPostalCode = request.Destination.ZipCode,
+            cartTotal = request.Items.Sum(item => item.UnitPrice * item.Quantity),
+            currency = "BRL",
+            requestedAtUtc = DateTimeOffset.UtcNow,
+            candidates = new[]
             {
                 new
                 {
@@ -36,15 +45,21 @@ public sealed class PricingClient : IPricingClient
                     originNodeId = route.OriginNodeId,
                     carrierCode = route.CarrierCode,
                     serviceLevelCode = route.ServiceLevelCode,
-                    mode = mode.ToString(),
-                    package = DownstreamContractAdapters.ToPackageProfile(package)
+                    package = new
+                    {
+                        actualWeightKg = package.TotalWeightKg,
+                        cubicWeightKg = package.CubicWeightKg,
+                        isFragile = package.HasFragileItem,
+                        isRestricted = package.HasRestrictedItem,
+                        category = packageCategory
+                    }
                 }
             }
         };
 
         using var response = await _httpClient.PostAsJsonAsync(
             "/shipping-prices/quotes/batch",
-            request,
+            pricingRequest,
             cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -55,10 +70,12 @@ public sealed class PricingClient : IPricingClient
 
         var batch = await response.Content.ReadFromJsonAsync<PricingBatchResponse>(cancellationToken);
         var price = batch?.Quotes?.FirstOrDefault() ?? batch?.Prices?.FirstOrDefault();
-        return price is null ? new ShippingPrice(Cost: 0, Discount: null) : new ShippingPrice(price.Cost, price.Discount);
+        return price is null
+            ? new ShippingPrice(Cost: 0, Discount: null)
+            : new ShippingPrice(price.CustomerPrice, price.Discount);
     }
 
     private sealed record PricingBatchResponse(IReadOnlyList<PricingQuote>? Quotes, IReadOnlyList<PricingQuote>? Prices);
 
-    private sealed record PricingQuote(decimal Cost, decimal? Discount);
+    private sealed record PricingQuote(decimal CustomerPrice, decimal LogisticsCost, decimal? Discount);
 }

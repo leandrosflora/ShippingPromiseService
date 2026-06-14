@@ -1,7 +1,6 @@
 using System.Net.Http.Json;
 using ShippingPromiseService.Application.Ports;
 using ShippingPromiseService.Contracts;
-using ShippingPromiseService.Domain;
 
 namespace ShippingPromiseService.Infrastructure.Clients;
 
@@ -42,7 +41,22 @@ public sealed class FulfillmentClient : IFulfillmentClient
             return Array.Empty<FulfillmentCandidate>();
         }
 
-        var candidates = await response.Content.ReadFromJsonAsync<List<FulfillmentCandidate>>(cancellationToken);
-        return candidates ?? new List<FulfillmentCandidate>();
+        var candidates = await response.Content.ReadFromJsonAsync<List<FulfillmentCenterCandidateResponse>>(cancellationToken);
+
+        return candidates?
+            .Select(x => new FulfillmentCandidate(
+                x.FulfillmentCenterId,
+                x.Region,
+                TimeOnly.FromTimeSpan(x.CutoffAt.TimeOfDay),
+                x.AvailableCapacityUnits > 0,
+                x.Score))
+            .ToList() ?? new List<FulfillmentCandidate>();
     }
+
+    private sealed record FulfillmentCenterCandidateResponse(
+        Guid FulfillmentCenterId,
+        string Region,
+        DateTimeOffset CutoffAt,
+        int AvailableCapacityUnits,
+        int Score);
 }
