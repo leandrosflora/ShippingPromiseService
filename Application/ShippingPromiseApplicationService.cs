@@ -19,6 +19,7 @@ public sealed class ShippingPromiseApplicationService
     private readonly DeliveryDecisionEngine _decisionEngine;
     private readonly FallbackEngine _fallbackEngine;
     private readonly IShippingPromiseAuditRepository _auditRepository;
+    private readonly IShippingPromiseEventPublisher _eventPublisher;
     private readonly ILogger<ShippingPromiseApplicationService> _logger;
 
     public ShippingPromiseApplicationService(
@@ -33,6 +34,7 @@ public sealed class ShippingPromiseApplicationService
         DeliveryDecisionEngine decisionEngine,
         FallbackEngine fallbackEngine,
         IShippingPromiseAuditRepository auditRepository,
+        IShippingPromiseEventPublisher eventPublisher,
         ILogger<ShippingPromiseApplicationService> logger)
     {
         _cache = cache;
@@ -46,11 +48,13 @@ public sealed class ShippingPromiseApplicationService
         _decisionEngine = decisionEngine;
         _fallbackEngine = fallbackEngine;
         _auditRepository = auditRepository;
+        _eventPublisher = eventPublisher;
         _logger = logger;
     }
 
     public async Task<ShippingPromiseResponse> CalculateAsync(
         ShippingPromiseRequest request,
+        string correlationId,
         CancellationToken cancellationToken)
     {
         Validate(request);
@@ -123,6 +127,7 @@ public sealed class ShippingPromiseApplicationService
 
             await _cache.SetAsync(cacheKey, response, PromiseCacheTtl, cancellationToken);
             await _auditRepository.SaveAsync(request, response, candidates, cancellationToken);
+            await _eventPublisher.PublishCalculatedAsync(request, response, correlationId, cancellationToken);
 
             return response;
         }
@@ -139,6 +144,7 @@ public sealed class ShippingPromiseApplicationService
 
             var response = ToResponse(new ShippingPromise(fallback));
             await _auditRepository.SaveAsync(request, response, new[] { fallback }, cancellationToken);
+            await _eventPublisher.PublishCalculatedAsync(request, response, correlationId, cancellationToken);
 
             return response;
         }

@@ -13,9 +13,11 @@ public static class ShippingPromiseEndpoints
         group.MapPost("/", async (
             ShippingPromiseRequest request,
             ShippingPromiseApplicationService service,
+            HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
-            var response = await service.CalculateAsync(request, cancellationToken);
+            var correlationId = ResolveCorrelationId(httpContext);
+            var response = await service.CalculateAsync(request, correlationId, cancellationToken);
 
             return Results.Ok(response);
         })
@@ -24,5 +26,16 @@ public static class ShippingPromiseEndpoints
         .ProducesProblem(StatusCodes.Status400BadRequest);
 
         return app;
+    }
+
+    private static string ResolveCorrelationId(HttpContext httpContext)
+    {
+        if (httpContext.Request.Headers.TryGetValue("X-Correlation-Id", out var headerValues) &&
+            !string.IsNullOrWhiteSpace(headerValues.FirstOrDefault()))
+        {
+            return headerValues.First()!;
+        }
+
+        return httpContext.TraceIdentifier;
     }
 }
