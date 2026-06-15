@@ -251,7 +251,7 @@ public sealed class ShippingPromiseApplicationService
 
     private static ShippingMode ResolveMode(RouteOption route)
     {
-        if (string.Equals(route.CarrierCode, "MELI_LOGISTICS", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(route.CarrierCode, "LOGISTICA_ENVIOS", StringComparison.OrdinalIgnoreCase))
             return ShippingMode.Fulfillment;
 
         return ShippingMode.Carrier;
