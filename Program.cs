@@ -50,21 +50,21 @@ builder.Services.AddHttpClient<IProductCatalogClient, ProductCatalogClient>(clie
 builder.Services.AddHttpClient<IInventoryClient, InventoryClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:Inventory"]!);
-    client.Timeout = TimeSpan.FromMilliseconds(600);
+    client.Timeout = TimeSpan.FromMilliseconds(500);
 })
 .AddStandardResilienceHandler();
 
 builder.Services.AddHttpClient<IFulfillmentClient, FulfillmentClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:Fulfillment"]!);
-    client.Timeout = TimeSpan.FromMilliseconds(600);
+    client.Timeout = TimeSpan.FromMilliseconds(500);
 })
 .AddStandardResilienceHandler();
 
 builder.Services.AddHttpClient<IRoutingClient, RoutingClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:Routing"]!);
-    client.Timeout = TimeSpan.FromMilliseconds(700);
+    client.Timeout = TimeSpan.FromMilliseconds(500);
 })
 .AddStandardResilienceHandler();
 
@@ -96,6 +96,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapHealthChecks("/health");
+app.MapHealthChecks("/health/live");
+app.MapHealthChecks("/health/ready");
 app.MapShippingPromiseEndpoints();
 
 app.Run();

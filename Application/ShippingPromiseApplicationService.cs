@@ -52,6 +52,16 @@ public sealed class ShippingPromiseApplicationService
         _logger = logger;
     }
 
+    public Task<ShippingPromiseResponse?> GetCalculatedPromiseAsync(
+        string promiseId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(promiseId))
+            throw new ArgumentException("PromiseId is required");
+
+        return _auditRepository.GetByPromiseIdAsync(promiseId, cancellationToken);
+    }
+
     public async Task<ShippingPromiseResponse> CalculateAsync(
         ShippingPromiseRequest request,
         string correlationId,
@@ -126,7 +136,7 @@ public sealed class ShippingPromiseApplicationService
 
             if (candidates.Count == 0)
             {
-                return Unavailable("No route or inventory available");
+                return Unavailable("no_options_available");
             }
 
             var bestCandidate = _decisionEngine.SelectBest(candidates);
