@@ -800,7 +800,7 @@ O `correlationId` vem do envelope Kafka no fluxo assíncrono. No fluxo HTTP, ele
 
 ### Como validar no Kafka UI
 
-1. Suba a stack local do repositório `meli-envios-architecture`, garantindo que o broker esteja disponível em `localhost:9092`.
+1. Suba a stack local do repositório `logistica-envios-demo-arch`, garantindo que o broker esteja disponível em `localhost:9092`.
 2. Execute este serviço com `dotnet run`.
 3. Publique um envelope `checkout.shipping.quote.requested` com `checkoutId` e `correlationId`.
 4. Abra `http://localhost:8088`.
