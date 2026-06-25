@@ -41,6 +41,8 @@ public sealed class ShippingQuoteRequestedConsumer : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Task.Yield();
+
         var topic = _options.Topics.ShippingQuoteRequested;
         _consumer.Subscribe(topic);
 
