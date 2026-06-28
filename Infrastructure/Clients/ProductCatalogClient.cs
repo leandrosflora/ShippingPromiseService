@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.WebUtilities;
 using ShippingPromiseService.Application.Ports;
 
 namespace ShippingPromiseService.Infrastructure.Clients;
@@ -18,10 +19,10 @@ public sealed class ProductCatalogClient : IProductCatalogClient
         IReadOnlyList<Guid> skuIds,
         CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.PostAsJsonAsync(
-            "/products/physical-info/batch",
-            new { SkuIds = skuIds },
-            cancellationToken);
+        var query = skuIds.Select(skuId => new KeyValuePair<string, string?>("skuIds", skuId.ToString()));
+        var requestUri = QueryHelpers.AddQueryString("/v1/products/logistics/batch", query);
+
+        using var response = await _httpClient.GetAsync(requestUri, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
