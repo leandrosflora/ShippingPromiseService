@@ -410,14 +410,12 @@ As integrações são feitas por `HttpClient` tipado com `AddStandardResilienceH
 ### Product Catalog
 
 - **Base URL**: `Services:ProductCatalog`
-- **Endpoint chamado**: `POST /products/physical-info/batch`
+- **Endpoint chamado**: `GET /v1/products/logistics/batch?skuIds={skuId}`
 - **Objetivo**: obter dados físicos dos SKUs.
-- **Request enviada**:
+- **Request enviada**: parâmetros de query repetidos para cada SKU.
 
-```json
-{
-  "skuIds": ["33333333-3333-3333-3333-333333333333"]
-}
+```http
+GET /v1/products/logistics/batch?skuIds=33333333-3333-3333-3333-333333333333
 ```
 
 - **Resposta esperada**:
