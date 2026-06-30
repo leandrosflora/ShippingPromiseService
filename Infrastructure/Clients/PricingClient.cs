@@ -58,7 +58,7 @@ public sealed class PricingClient : IPricingClient
         };
 
         using var response = await _httpClient.PostAsJsonAsync(
-            "/v1/shipping-prices/quotes/batch",
+            "/shipping-prices/quotes/batch",
             pricingRequest,
             cancellationToken);
 
