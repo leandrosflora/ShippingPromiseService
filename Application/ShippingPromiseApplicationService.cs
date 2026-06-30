@@ -69,8 +69,9 @@ public sealed class ShippingPromiseApplicationService
     {
         Validate(request);
 
-        var cacheKey = CacheKeyFactory.Build(request);
-        var cached = await _cache.GetAsync(cacheKey, cancellationToken);
+        //var cacheKey = CacheKeyFactory.Build(request);
+        //var cached = await _cache.GetAsync(cacheKey, cancellationToken);
+        ShippingPromiseResponse? cached = null;
 
         if (cached is not null)
         {
@@ -142,7 +143,7 @@ public sealed class ShippingPromiseApplicationService
             var bestCandidate = _decisionEngine.SelectBest(candidates);
             var response = ToResponse(new ShippingPromise(bestCandidate));
 
-            await _cache.SetAsync(cacheKey, response, PromiseCacheTtl, cancellationToken);
+            //await _cache.SetAsync(cacheKey, response, PromiseCacheTtl, cancellationToken);
             await _auditRepository.SaveAsync(request, response, candidates, cancellationToken);
             await _eventPublisher.PublishCalculatedAsync(request, response, correlationId, cancellationToken);
 
