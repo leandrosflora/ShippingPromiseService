@@ -26,7 +26,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
         {
             sellerId,
             destinationPostalCode = destination.ZipCode,
-            mode = ShippingMode.Fulfillment.ToString(),
+            mode = (int)ShippingMode.Fulfillment,
             package = DownstreamContractAdapters.ToPackageProfile(package),
             requestedAtUtc = DateTimeOffset.UtcNow
         };

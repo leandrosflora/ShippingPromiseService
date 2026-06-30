@@ -31,7 +31,7 @@ public sealed class RoutingClient : IRoutingClient
         };
 
         using var response = await _httpClient.PostAsJsonAsync(
-            "/routes/search",
+            "/v1/routes/calculate",
             request,
             cancellationToken);
 

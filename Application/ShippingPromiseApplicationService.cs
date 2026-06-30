@@ -144,7 +144,7 @@ public sealed class ShippingPromiseApplicationService
             var response = ToResponse(new ShippingPromise(bestCandidate));
 
             //await _cache.SetAsync(cacheKey, response, PromiseCacheTtl, cancellationToken);
-            await _auditRepository.SaveAsync(request, response, candidates, cancellationToken);
+            //await _auditRepository.SaveAsync(request, response, candidates, cancellationToken);
             await _eventPublisher.PublishCalculatedAsync(request, response, correlationId, cancellationToken);
 
             return response;

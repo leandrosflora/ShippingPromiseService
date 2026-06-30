@@ -40,7 +40,7 @@ public sealed class CarrierClient : ICarrierClient
         };
 
         using var response = await _httpClient.PostAsJsonAsync(
-            "/carrier-availability/search",
+            "/v1/carrier-availability/search",
             request,
             cancellationToken);
 

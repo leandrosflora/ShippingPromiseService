@@ -20,7 +20,7 @@ public sealed class InventoryClient : IInventoryClient
         CancellationToken cancellationToken)
     {
         using var response = await _httpClient.PostAsJsonAsync(
-            "/inventory/availability/batch",
+            "/v1/inventory/availability/batch",
             new { sellerId, skuIds },
             cancellationToken);
 
