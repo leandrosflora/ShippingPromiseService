@@ -68,35 +68,35 @@ builder.Services.AddHttpClient<IProductCatalogClient, ProductCatalogClient>(clie
 builder.Services.AddHttpClient<IInventoryClient, InventoryClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:Inventory"]!);
-    client.Timeout = TimeSpan.FromSeconds(25);
+    client.Timeout = TimeSpan.FromSeconds(60);
 })
 .AddStandardResilienceHandler();
 
 builder.Services.AddHttpClient<IFulfillmentClient, FulfillmentClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:Fulfillment"]!);
-    client.Timeout = TimeSpan.FromSeconds(25);
+    client.Timeout = TimeSpan.FromSeconds(60);
 })
 .AddStandardResilienceHandler();
 
 builder.Services.AddHttpClient<IRoutingClient, RoutingClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:Routing"]!);
-    client.Timeout = TimeSpan.FromSeconds(25);
+    client.Timeout = TimeSpan.FromSeconds(60);
 })
 .AddStandardResilienceHandler();
 
 builder.Services.AddHttpClient<ICarrierClient, CarrierClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:Carrier"]!);
-    client.Timeout = TimeSpan.FromSeconds(25);
+    client.Timeout = TimeSpan.FromSeconds(60);
 })
 .AddStandardResilienceHandler();
 
 builder.Services.AddHttpClient<IPricingClient, PricingClient>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:Pricing"]!);
-    client.Timeout = TimeSpan.FromSeconds(25);
+    client.Timeout = TimeSpan.FromSeconds(60);
 })
 .AddStandardResilienceHandler();
 

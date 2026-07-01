@@ -161,7 +161,7 @@ public sealed class ShippingPromiseApplicationService
             }
 
             var response = ToResponse(new ShippingPromise(fallback));
-            await _auditRepository.SaveAsync(request, response, new[] { fallback }, cancellationToken);
+            //await _auditRepository.SaveAsync(request, response, new[] { fallback }, cancellationToken);
             await _eventPublisher.PublishCalculatedAsync(request, response, correlationId, cancellationToken);
 
             return response;
