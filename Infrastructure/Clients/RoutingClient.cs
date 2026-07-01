@@ -58,7 +58,7 @@ public sealed class RoutingClient : IRoutingClient
             route.OriginNodeId,
             route.DestinationNodeId,
             firstLeg?.CarrierCode ?? string.Empty,
-            firstLeg?.ServiceLevelCode ?? firstLeg?.Mode ?? string.Empty,
+            firstLeg?.ServiceLevelCode ?? string.Empty,
             (int)Math.Ceiling(route.TotalElapsedMinutes / 1440m),
             Available: true,
             Priority: index);
@@ -75,6 +75,5 @@ public sealed class RoutingClient : IRoutingClient
 
     private sealed record RouteLegResponse(
         string? CarrierCode,
-        string? ServiceLevelCode,
-        string? Mode);
+        string? ServiceLevelCode);
 }
