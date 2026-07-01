@@ -72,10 +72,10 @@ public sealed class PricingClient : IPricingClient
         var price = batch?.Quotes?.FirstOrDefault() ?? batch?.Prices?.FirstOrDefault();
         return price is null
             ? new ShippingPrice(Cost: 0, Discount: null)
-            : new ShippingPrice(price.CustomerPrice, price.Discount);
+            : new ShippingPrice(price.CustomerPrice ?? 0, price.Discount);
     }
 
     private sealed record PricingBatchResponse(IReadOnlyList<PricingQuote>? Quotes, IReadOnlyList<PricingQuote>? Prices);
 
-    private sealed record PricingQuote(decimal CustomerPrice, decimal LogisticsCost, decimal? Discount);
+    private sealed record PricingQuote(decimal? CustomerPrice, decimal? LogisticsCost, decimal? Discount);
 }
